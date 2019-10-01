@@ -273,6 +273,10 @@ run:
           mkdir -p /shared/backups
           chown -R discourse:www-data /shared/backups
         fi
+        if [[ ! -d /shared/assets ]]; then
+          mkdir -p /shared/assets
+          chown -R discourse:www-data /shared/assets
+        fi
 
         rm -rf /shared/tmp/{backups,restores}
         mkdir -p /shared/tmp/{backups,restores}
