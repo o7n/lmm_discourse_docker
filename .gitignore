@@ -15,5 +15,6 @@ image/docker-squash
 image/docker-squash.tar.gz
 image/discourse_dev/postgres.template.yml
 image/discourse_dev/redis.template.yml
+templates/variables.template.yml
 .gc-state/*
 .vagrant/
