@@ -18,49 +18,64 @@ check_root() {
 connect_to_port () {
   HOST="$1"
   PORT="$2"
-  VERIFY=`date +%s | sha256sum | base64 | head -c 20`
-  echo -e "HTTP/1.1 200 OK\n\n $VERIFY" | nc -w 4 -l -p $PORT >/dev/null 2>&1 &
-  if curl --proto =http -s $HOST:$PORT --connect-timeout 3 | grep $VERIFY >/dev/null 2>&1
-  then
-      return 0
+  VERIFY=$(date +%s | sha256sum | base64 | head -c 20)
+  if ! [ -x "$(command -v nc)" ]; then
+    echo "In order to check the connection to $HOST:$PORT we need to open a socket using netcat."
+    echo However netcat is not installed on your system. You can continue without this check
+    echo or abort the setup, install netcat and try again.
+    while true; do
+      read -p "Would you like to continue without this check? [yn] " yn
+      case $yn in
+      [Yy]*) return 2 ;;
+      [Nn]*) exit ;;
+      *) echo "Please answer y or n." ;;
+      esac
+    done
   else
-    curl --proto =http -s localhost:$PORT >/dev/null 2>&1
-    return 1
+    echo -e "HTTP/1.1 200 OK\n\n $VERIFY" | nc -w 4 -l -p $PORT >/dev/null 2>&1 &
+    if curl --proto =http -s $HOST:$PORT --connect-timeout 3 | grep $VERIFY >/dev/null 2>&1; then
+      return 0
+    else
+      curl --proto =http -s localhost:$PORT >/dev/null 2>&1
+      return 1
+    fi
   fi
 }
 
-check_IP_match () {
+check_IP_match() {
   HOST="$1"
   echo
   echo Checking your domain name . . .
-  if connect_to_port $HOST 443
-  then
-      echo
+  connect_to_port $HOST 443; ec=$?
+  case $ec in
+    0)
       echo "Connection to $HOST succeeded."
-  else
-    echo WARNING:: This server does not appear to be accessible at $HOST:443.
-    echo
-    if connect_to_port $HOST 80
-    then
-	echo A connection to port 80 succeeds, however.
-	echo This suggests that your DNS settings are correct,
-	echo but something is keeping traffic to port 443 from getting to your server.
-	echo Check your networking configuration to see that connections to port 443 are allowed.
-    else
-      echo "A connection to http://$HOST (port 80) also fails."
+      ;;
+    1)
+      echo "WARNING:: This server does not appear to be accessible at $HOST:443."
       echo
-      echo This suggests that $HOST resolves to the wrong IP address
-      echo or that traffic is not being routed to your server.
-    fi
-    echo
-    echo Google: \"open ports YOUR CLOUD SERVICE\" for information for resolving this problem.
-    echo
-    echo You should probably answer \"n\" at the next prompt and disable Let\'s Encrypt.
-    echo
-    echo This test might not work for all situations,
-    echo so if you can access Discourse at http://$HOST, you might try anyway.
-    sleep 3
-  fi
+      if connect_to_port $HOST 80; then
+        echo A connection to port 80 succeeds, however.
+        echo This suggests that your DNS settings are correct,
+        echo but something is keeping traffic to port 443 from getting to your server.
+        echo Check your networking configuration to see that connections to port 443 are allowed.
+      else
+        echo "A connection to http://$HOST (port 80) also fails."
+        echo
+        echo "This suggests that $HOST resolves to the wrong IP address"
+        echo or that traffic is not being routed to your server.
+      fi
+      echo
+      echo Google: \"open ports YOUR CLOUD SERVICE\" for information for resolving this problem.
+      echo
+      echo If you want to proceed anyway, you will need to
+      echo edit the containers/app.yml file manually.
+      exit 1
+      ;;
+    2)
+      echo "Continuing without port check."
+      ;;
+  esac
 }
 
 ##
@@ -97,7 +112,15 @@ check_osx_memory() {
 ## Linux available memory
 ##
 check_linux_memory() {
-  echo `free -g --si | awk ' /Mem:/  {print $2} '`
+  ## some VMs report just under 1GB of RAM, so
+  ## make an exception and allow those with more
+  ## than 989MB
+  mem=`free -m --si | awk ' /Mem:/ {print $2}'`
+  if [ "$mem" -ge 990 -a "$mem" -lt 1000 ]; then
+    echo 1
+  else
+    echo `free -g --si | awk ' /Mem:/  {print $2} '`
+  fi
 }
 
 ##
@@ -349,6 +372,8 @@ ask_user_for_config() {
       fi
     fi
 
+    check_IP_match $hostname
+
     if [ ! -z "$developer_emails" ]
     then
       read -p "Email address for admin account(s)? [$developer_emails]: " new_value
@@ -412,7 +437,7 @@ ask_user_for_config() {
 
     if [ ! -z $letsencrypt_account_email ]
     then
-      read -p "Optional email address for setting up Let's Encrypt? ($letsencrypt_status) [$letsencrypt_account_email]: " new_value
+      read -p "Optional email address for Let's Encrypt warnings? ($letsencrypt_status) [$letsencrypt_account_email]: " new_value
       if [ ! -z "$new_value" ]
       then
           letsencrypt_account_email="$new_value"
@@ -423,11 +448,6 @@ ask_user_for_config() {
             letsencrypt_status="Enter 'OFF' to disable."
           fi
       fi
-    fi
-
-    if [ "$letsencrypt_status" == "Enter 'OFF' to disable." ]
-    then
-       check_IP_match $hostname
     fi
 
     echo -e "\nDoes this look right?\n"
@@ -534,57 +554,37 @@ ask_user_for_config() {
       update_ok="n"
     fi
   fi
-  if [ "$letsencrypt_status" = "ENTER to skip" ]
-  then
-      local src='^  #\?- "templates\/web.ssl.template.yml"'
-      local dst='  #\- "templates\/web.ssl.template.yml"'
-      sed -i -e "s/$src/$dst/w $changelog" $web_file
-      if [ ! -s $changelog ]
-      then
-        update_ok="n"
-        echo "web.ssl.template.yml NOT DISABLED--Are you using a non-standard template?"
-      fi
-      local src='^  #\?- "templates\/web.letsencrypt.ssl.template.yml"'
-      local dst='  #- "templates\/web.letsencrypt.ssl.template.yml"'
 
-      sed -i -e "s/$src/$dst/w $changelog" $web_file
-      if [ ! -s $changelog ]
-      then
-        update_ok="n"
-        echo "web.ssl.template.yml NOT DISABLED--Are you using a non-standard template?"
-      fi
-  else # enable let's encrypt
-    echo "Let's Encrypt will be enabled for $letsencrypt_account_email"
-      sed -i -e "s/^  #\?LETSENCRYPT_ACCOUNT_EMAIL:.*/  LETSENCRYPT_ACCOUNT_EMAIL: $letsencrypt_account_email/w $changelog" $web_file
-      if [ -s $changelog ]
-      then
-        rm $changelog
-      else
-        echo "LETSENCRYPT_ACCOUNT_EMAIL change failed."
-        update_ok="n"
-      fi
-      local src='^  #\?- "templates\/web.ssl.template.yml"'
-      local dst='  \- "templates\/web.ssl.template.yml"'
-      sed -i -e "s/$src/$dst/w $changelog" $web_file
-      if [ -s $changelog ]
-      then
-	  echo "web.ssl.template.yml enabled"
-      else
-        update_ok="n"
-        echo "web.ssl.template.yml NOT ENABLED--was it on already?"
-      fi
-      local src='^  #\?- "templates\/web.letsencrypt.ssl.template.yml"'
-      local dst='  - "templates\/web.letsencrypt.ssl.template.yml"'
+  echo "Enabling Let's Encrypt"
+    sed -i -e "s/^  #\?LETSENCRYPT_ACCOUNT_EMAIL:.*/  LETSENCRYPT_ACCOUNT_EMAIL: $letsencrypt_account_email/w $changelog" $web_file
+    if [ -s $changelog ]
+    then
+      rm $changelog
+    else
+      echo "LETSENCRYPT_ACCOUNT_EMAIL change failed."
+      update_ok="n"
+    fi
+    local src='^  #\?- "templates\/web.ssl.template.yml"'
+    local dst='  \- "templates\/web.ssl.template.yml"'
+    sed -i -e "s/$src/$dst/w $changelog" $web_file
+    if [ -s $changelog ]
+    then
+  echo "web.ssl.template.yml enabled"
+    else
+      update_ok="n"
+      echo "web.ssl.template.yml NOT ENABLED--was it on already?"
+    fi
+    local src='^  #\?- "templates\/web.letsencrypt.ssl.template.yml"'
+    local dst='  - "templates\/web.letsencrypt.ssl.template.yml"'
 
-      sed -i -e "s/$src/$dst/w $changelog" $web_file
-      if [ -s $changelog ]
-      then
-	      echo "letsencrypt.ssl.template.yml enabled"
-      else
-        update_ok="n"
-        echo "letsencrypt.ssl.template.yml NOT ENABLED -- was it on already?"
-      fi
-  fi
+    sed -i -e "s/$src/$dst/w $changelog" $web_file
+    if [ -s $changelog ]
+    then
+      echo "letsencrypt.ssl.template.yml enabled"
+    else
+      update_ok="n"
+      echo "letsencrypt.ssl.template.yml NOT ENABLED -- was it on already?"
+    fi
 
   if [ "$update_ok" == "y" ]
   then

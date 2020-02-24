@@ -36,7 +36,7 @@ RUN apt -y install build-essential git wget rsync \
                        postgresql-contrib-${PG_MAJOR} libpq-dev libreadline-dev \
                        cron anacron \
                        psmisc rsyslog vim whois brotli libunwind-dev \
-                       libtcmalloc-minimal4
+                       libtcmalloc-minimal4 cmake
 RUN sed -i -e 's/start -q anacron/anacron -s/' /etc/cron.d/anacron
 RUN sed -i.bak 's/$ModLoad imklog/#$ModLoad imklog/' /etc/rsyslog.conf
 RUN dpkg-divert --local --rename --add /sbin/initctl
@@ -49,7 +49,7 @@ RUN cd / &&\
     rm -f /etc/apt/apt.conf.d/40proxy &&\
     locale-gen en_US &&\
     apt install -y nodejs &&\
-    npm install -g uglify-js@"<3" &&\
+    npm install -g uglify-js &&\
     npm install -g svgo
 
 ADD install-nginx /tmp/install-nginx
@@ -70,12 +70,12 @@ RUN mkdir /jemalloc-new && cd /jemalloc-new &&\
 RUN echo 'gem: --no-document' >> /usr/local/etc/gemrc &&\
     mkdir /src && cd /src && git clone https://github.com/sstephenson/ruby-build.git &&\
     cd /src/ruby-build && ./install.sh &&\
-    cd / && rm -rf /src/ruby-build && (ruby-build 2.6.4 /usr/local)
+    cd / && rm -rf /src/ruby-build && (ruby-build 2.6.5 /usr/local)
 
 RUN gem update --system
 
 RUN gem install bundler --force &&\
-    rm -rf /usr/local/share/ri/2.6.4/system &&\
+    rm -rf /usr/local/share/ri/2.6.5/system &&\
     cd / && git clone https://github.com/discourse/pups.git
 
 ADD install-redis /tmp/install-redis
