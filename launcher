@@ -23,6 +23,9 @@ usage () {
   exit 1
 }
 
+# for potential re-exec later
+SAVED_ARGV=("$@")
+
 command=$1
 config=$2
 
@@ -88,7 +91,7 @@ git_rec_version='1.8.0'
 config_file=containers/"$config".yml
 cidbootstrap=cids/"$config"_bootstrap.cid
 local_discourse=local_discourse
-image="discourse/base:2.0.20191219-2109"
+image="discourse/base:2.0.20201004-2310"
 docker_path=`which docker.io 2> /dev/null || which docker`
 git_path=`which git`
 
@@ -144,6 +147,11 @@ install_docker() {
   exit 1
 }
 
+pull_image() {
+  # Add a single retry to work around dockerhub TLS errors
+  $docker_path pull $image || $docker_path pull $image
+}
+
 check_prereqs() {
 
   if [ -z $docker_path ]; then
@@ -162,7 +170,7 @@ check_prereqs() {
   # 2. running an approved storage driver?
   if ! $docker_path info 2> /dev/null | egrep -q 'Storage Driver: (aufs|zfs|overlay2)$'; then
     echo "Your Docker installation is not using a supported storage driver.  If we were to proceed you may have a broken install."
-    echo "aufs is the recommended storage driver, although zfs and overlay2 may work as well."
+    echo "overlay2 is the recommended storage driver, although zfs and aufs may work as well."
     echo "Other storage drivers are known to be problematic."
     echo "You can tell what filesystem you are using by running \"docker info\" and looking at the 'Storage Driver' line."
     echo
@@ -196,6 +204,8 @@ check_prereqs() {
     echo
     echo "Please be patient"
     echo
+
+    pull_image
   fi
 
   # 5. running recommended git version
@@ -348,6 +358,7 @@ set_template_info() {
         p e
        end
     end
+    env.each{|k,v| puts "*ERROR." if v.is_a?(Hash)}
     puts env.map{|k,v| "-e\n#{k}=#{v}" }.join("\n")
 RUBY
 
@@ -480,7 +491,7 @@ fi
 
     if [[ $REPLY =~ ^[Yy]$ ]]; then
       echo "removing old PostgreSQL data cluster at /var/discourse/shared/standalone/postgres_data_old..."
-      rm -rf /var/discourse/shared/standalone/postgres_data_old
+      rm -rf /var/discourse/shared/standalone/postgres_data_old*
     else
       exit 1
     fi
@@ -657,7 +668,7 @@ run_bootstrap() {
 
   # Is the image available?
   # If not, pull it here so the user is aware what's happening.
-  $docker_path history $image >/dev/null 2>&1 || $docker_path pull $image
+  $docker_path history $image >/dev/null 2>&1 || pull_image
 
   set_template_info
 
@@ -781,14 +792,11 @@ case "$command" in
           echo "Launcher is up-to-date"
 
         elif [ $LOCAL = $BASE ]; then
-          echo "Updating Launcher"
+          echo "Updating Launcher..."
           git pull || (echo 'failed to update' && exit 1)
 
-          for (( i=${#BASH_ARGV[@]}-1,j=0; i>=0,j<${#BASH_ARGV[@]}; i--,j++ ))
-          do
-            args[$j]=${BASH_ARGV[$i]}
-          done
-          exec /bin/bash $0 "${args[@]}" # $@ is empty, because of shift at the beginning. Use BASH_ARGV instead.
+          echo "Launcher updated, restarting..."
+          exec "$0" "${SAVED_ARGV[@]}"
 
         elif [ $REMOTE = $BASE ]; then
           echo "Your version of Launcher is ahead of origin"
@@ -806,7 +814,7 @@ case "$command" in
           echo "Stopping old container"
           (
             set -x
-            $docker_path stop -t 10 $config
+            $docker_path stop -t 60 $config
           )
       fi
 

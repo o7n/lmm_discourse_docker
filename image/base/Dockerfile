@@ -2,7 +2,7 @@
 # VERSION:  release
 FROM debian:buster-slim
 
-ENV PG_MAJOR 10
+ENV PG_MAJOR 12
 ENV RUBY_ALLOCATOR /usr/lib/libjemalloc.so.1
 ENV RAILS_ENV production
 
@@ -28,20 +28,22 @@ RUN echo "deb http://apt.postgresql.org/pub/repos/apt/ buster-pgdg main" | \
         tee /etc/apt/sources.list.d/postgres.list
 RUN curl --silent --location https://deb.nodesource.com/setup_10.x | sudo bash -
 RUN apt -y update
-RUN apt -y install build-essential git wget rsync \
+# install these without recommends to avoid pulling in e.g.
+# X11 libraries, mailutils
+RUN apt -y install --no-install-recommends git rsyslog logrotate cron ssh-client less
+RUN apt -y install build-essential rsync \
                        libxslt-dev libcurl4-openssl-dev \
                        libssl-dev libyaml-dev libtool \
                        libxml2-dev gawk parallel \
                        postgresql-${PG_MAJOR} postgresql-client-${PG_MAJOR} \
                        postgresql-contrib-${PG_MAJOR} libpq-dev libreadline-dev \
-                       cron anacron \
-                       psmisc rsyslog vim whois brotli libunwind-dev \
+                       anacron wget \
+                       psmisc vim whois brotli libunwind-dev \
                        libtcmalloc-minimal4 cmake
 RUN sed -i -e 's/start -q anacron/anacron -s/' /etc/cron.d/anacron
 RUN sed -i.bak 's/$ModLoad imklog/#$ModLoad imklog/' /etc/rsyslog.conf
 RUN dpkg-divert --local --rename --add /sbin/initctl
 RUN sh -c "test -f /sbin/initctl || ln -s /bin/true /sbin/initctl"
-RUN apt -y install openssh-server
 RUN cd / &&\
     apt -y install runit socat &&\
     mkdir -p /etc/runit/1.d &&\
@@ -63,19 +65,19 @@ RUN mkdir /jemalloc-stable && cd /jemalloc-stable &&\
       cd / && rm -rf /jemalloc-stable
 
 RUN mkdir /jemalloc-new && cd /jemalloc-new &&\
-      wget https://github.com/jemalloc/jemalloc/releases/download/5.2.0/jemalloc-5.2.0.tar.bz2 &&\
-      tar -xjf jemalloc-5.2.0.tar.bz2 && cd jemalloc-5.2.0 && ./configure --prefix=/usr --with-install-suffix=5.1.0 && make build_lib && make install_lib &&\
+      wget https://github.com/jemalloc/jemalloc/releases/download/5.2.1/jemalloc-5.2.1.tar.bz2 &&\
+      tar -xjf jemalloc-5.2.1.tar.bz2 && cd jemalloc-5.2.1 && ./configure --prefix=/usr --with-install-suffix=5.2.1 && make build_lib && make install_lib &&\
       cd / && rm -rf /jemalloc-new
 
 RUN echo 'gem: --no-document' >> /usr/local/etc/gemrc &&\
     mkdir /src && cd /src && git clone https://github.com/sstephenson/ruby-build.git &&\
     cd /src/ruby-build && ./install.sh &&\
-    cd / && rm -rf /src/ruby-build && (ruby-build 2.6.5 /usr/local)
+    cd / && rm -rf /src/ruby-build && (ruby-build 2.6.6 /usr/local)
 
 RUN gem update --system
 
 RUN gem install bundler --force &&\
-    rm -rf /usr/local/share/ri/2.6.5/system &&\
+    rm -rf /usr/local/share/ri/2.6.6/system &&\
     cd / && git clone https://github.com/discourse/pups.git
 
 ADD install-redis /tmp/install-redis
@@ -85,7 +87,7 @@ ADD install-imagemagick /tmp/install-imagemagick
 RUN /tmp/install-imagemagick
 
 # Validate install
-RUN ruby -Eutf-8 -e "v = \`convert -version\`; %w{png tiff jpeg freetype}.each { |f| unless v.include?(f); STDERR.puts('no ' + f +  ' support in imagemagick'); exit(-1); end }"
+RUN ruby -Eutf-8 -e "v = \`convert -version\`; %w{png tiff jpeg freetype heic}.each { |f| unless v.include?(f); STDERR.puts('no ' + f +  ' support in imagemagick'); exit(-1); end }"
 
 ADD install-pngcrush /tmp/install-pngcrush
 RUN /tmp/install-pngcrush

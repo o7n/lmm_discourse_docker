@@ -92,6 +92,8 @@ run:
         - git pull
         - git fetch origin $version
         - git checkout $version
+        - mkdir -p tmp
+        - chown discourse:www-data tmp
         - mkdir -p tmp/pids
         - mkdir -p tmp/sockets
         - touch tmp/.gitkeep
@@ -103,6 +105,8 @@ run:
         - bash -c "mkdir -p           /shared/tmp/{backups,restores}"
         - bash -c "ln    -s           /shared/tmp/{backups,restores} $home/tmp"
         - chown -R discourse:www-data /shared/log/rails /shared/uploads /shared/backups /shared/tmp /shared/assets
+        # scrub broken symlinks from plugins that have been removed
+        - find public/plugins/ -maxdepth 1 -xtype l -delete
 
   - exec:
       cmd:
@@ -148,7 +152,14 @@ run:
       cd: $home
       hook: bundle_exec
       cmd:
-        - su discourse -c 'bundle install --deployment --retry 3 --jobs 4 --verbose --without test development'
+        - su discourse -c 'bundle install --deployment --retry 3 --jobs 1 --verbose --without test development'
+
+  - exec:
+      cd: $home
+      cmd:
+        - su discourse -c 'bundle exec rake plugin:pull_compatible_all'
+      raise_on_fail: false
+
   - exec:
       cd: $home
       hook: db_migrate
@@ -281,7 +292,14 @@ run:
         rm -rf /shared/tmp/{backups,restores}
         mkdir -p /shared/tmp/{backups,restores}
         chown -R discourse:www-data /shared/tmp/{backups,restores}
-
+        chown root:root /var/log
+        chmod g-w /shared/log/rails
+  - file:
+      path: /etc/runit/1.d/01-cleanup-web-pids
+      chmod: +x
+      contents: |
+        #!/bin/bash
+        /bin/rm -f /var/www/discourse/tmp/pids/*.pid
   # change login directory to Discourse home
   - file:
      path: /root/.bash_profile
